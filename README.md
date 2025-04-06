@@ -1,2 +1,108 @@
 # transformer
 It's a brief introduction of transformer, which includes several basic concepts and operations.
+## 1.1 Architecture of transformer
+Transformer 架构是一种基于注意力机制的深度学习模型，由 Vaswani 等人在 2017 年提出。它颠覆了传统的 RNN 和 CNN，通过全局自注意力机制来捕捉序列中各元素间的依赖关系，从而实现高效并行计算和长程依赖建模。
+这里给出了经典的transformer的架构图：
+![architecture](https://github.com/user-attachments/assets/47e27f51-61ae-4669-ab67-d6d4ac75006c)
+Transformer 模型主要由四部分组成：
+- **编码器（Encoder）**：由N个编码器层堆叠而成，每个编码器层由两个子层连接组成。第一个子层连接结构包括一个多头自注意力子层（Multi Head Attention）和规范化层（Layer Normalization）以及一个残差连接（Residual Model）；第二个子层连接结构包含一个前馈全连接子层（Feed Forward）和规范化层以及一个残差连接。将输入序列（例如一段文本）转换为连续的高维表示。
+- **解码器（Decoder）**：同样由N个解码器堆叠而成，每个解码器层由三个子层连接构成，第一个子层连接结构包括一个多头自注意力子层（Mutil Head Self-attention）和规范化层以及残差连接，后两个子层结构与编码器相同。基于编码器输出以及之前生成的目标序列，逐步生成最终的输出（如翻译文本）。
+- **输入部分（Input）**：包含Embedding层以及positional encoding。
+- **输出部分（Output）**：包含线性层和softmax处理。
+基于seq2seq架构的transformer模型可以完成NLP领域研究的典型任务，例如机器翻译、文本生成等。同时又可以构建预训练语言模型，用于不同任务的迁移学习。
+接下来会对编码器、解码器以及输入和输出部分进行一个详细的介绍。
+## 2.1 Input part
+输入部分包括源文本的嵌入层和源文本的位置编码器以及目标文本的嵌入层和目标文本的位置编码器，一共四个小部分。
+### 文本嵌入层的作用
+文本嵌入层是将离散的文本符号转换为连续向量表示的关键组件，通过查找表或神经网络参数将每个词或子词单元映射到一个高维向量空间，使得相似语义的词在向量空间中相互接近，从而为后续的模型层提供可微、可优化的输入。在现代 NLP 模型中，嵌入层不仅捕捉词语的静态语义关系，还会在训练过程中动态更新向量表示，使模型能够针对具体任务不断调整词向量以获得更优性能。
+在 Transformer 架构中，文本嵌入层通常与位置编码相结合，以弥补模型本身缺乏顺序信息的不足。嵌入层首先将输入的离散 token 转换为向量表示，然后与相应的位置编码相加，从而在保持词语语义信息的同时引入位置信息。这种设计既确保了模型能够感知序列中词语的顺序，又维持了嵌入向量在语义空间中的连续性和可训练性。
+```bash
+# This is a detailed example of input embedding.
+import torch
+import torch.nn as nn
+import math
+from torch.autograd import Variable
+#定义Embeddings类来实现文本嵌入层
+class Embeddings(nn.Module):
+    def __init__(self, d_model, vocab):
+        '''d_model:指词嵌入的维度 vocab:指词表的大小'''
+        super(Embeddings, self).__init__()
+        self.lut = nn.Embedding(vocab, d_model)
+        self.d_model = d_model
+    def forward(self, x):
+        '''该层的前向传播逻辑 所有层都会有这个函数
+        参数x:Embedding层是首层 所以代表输入给模型的文本通过词汇映射以后的张量'''
+        return self.lut(x) * math.sqrt(self.d_model)
+d_model = 512
+vocab = 1000
+x = Variable(torch.LongTensor([[1,2,3,4],[5,6,7,8]]))
+emb = Embeddings(d_model, vocab)
+embr = emb(x)
+print("embr",embr)
+print(embr.shape)
+
+# The results are as follows:
+embr tensor([[[  8.1698, -17.9067, -18.2930,  ...,  20.5587, -34.3979,   2.2324],
+         [ 14.6471,  11.7492,  -1.3063,  ...,  16.8272,  17.8224, -27.0285],
+         [-27.9950,  -9.8002,   6.7823,  ...,  12.2133,  13.5687,  11.5653],
+         [ 15.9306,  16.4315, -20.9837,  ...,  13.7980, -51.4857,   4.0905]],
+
+        [[ -9.8196, -19.7474,  15.3972,  ...,  -7.8003, -25.9976,  28.1036],
+         [ 10.8901,  -8.4099,  11.9932,  ..., -28.9421,  25.8586,  -5.6181],
+         [ -8.1165,  -4.8526, -32.4488,  ..., -13.8231, -38.0867, -11.5192],
+         [ -5.7509,  14.8611, -21.8043,  ..., -22.2486, -16.3707,  48.7701]]],
+       grad_fn=<MulBackward0>)
+torch.Size([2, 4, 512])
+```
+### 位置编码器的作用
+传统的序列模型，如RNN或LSTM，通过其递归结构天然地捕捉了数据中的时间或序列顺序信息。而Transformer模型则完全依赖自注意力机制，这使得它无法通过网络结构本身区分输入序列中各个元素的顺序。位置编码器通过将额外的位置信息注入到输入嵌入（embedding）中，使得模型能够了解每个元素在序列中的具体位置。这种位置信息可以采用固定的正弦和余弦函数形式，也可以使用可学习的参数进行训练。固定编码的优势在于其平滑的周期性特征和较好的推广能力，而可学习编码则能够更好地适应特定任务的需求。
+在实际应用中，位置编码器不仅为Transformer提供了绝对位置信息，还在一定程度上帮助模型捕捉了相对位置关系，这对于诸如机器翻译、文本生成以及语义理解等任务来说至关重要。通过有效地结合输入特征与位置信息，模型能够更准确地识别词汇之间的关系和上下文，从而提升整体性能和泛化能力。
+```bash
+# This is a detailed example of positional encoding.
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, dropout, max_len=5000):
+        #分别表示词嵌入的维度，dropout层的置零比率 句子的最大长度
+        super(PositionalEncoding, self).__init__()
+
+        self.dropout = nn.Dropout(p=dropout) #实例化dropout层
+        pe = torch.zeros(max_len, d_model) #初始化一个位置编码的矩阵
+        position = torch.arange(0, max_len).unsqueeze(1) #初始化一个绝对位置矩阵
+        div_term = torch.exp(torch.arange(0, d_model, 2)* -(math.log(10000.0)/d_model)) #定义一个变换矩阵div_term 进行跳跃式初始化
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term) #将变化的矩阵分别进行奇偶的赋值
+        pe = pe.unsqueeze(0) #将二维张量扩展到三维
+        #将位置编码矩阵注册成模型的buffer 该buffer不是模型中的参数 不会随着优化器进行改变
+        #注册成buffer以后 就可以在模型保存后重新加载的时候就可以把位置编码器和模型参数加载进来
+        self.register_buffer('pe', pe)
+    
+    def forward(self, x):
+        #x代表文本序列的词嵌入表示
+        #pe编码过长 所以把第二个维度 也就是maxlen对应的维度缩小成x的句子对应的维度
+        x= x + Variable(self.pe[:, :x.size(1)], requires_grad=False)
+        return self.dropout(x)
+d_model = 512
+dropout = 0.1
+max_len = 60
+
+x =  embr
+pe =  PositionalEncoding(d_model, dropout, max_len)
+pe_result = pe(x)
+print(pe_result)
+print(pe_result.shape)
+
+# The results are as follows:
+tensor([[[-31.9787, -22.4201,  -2.7243,  ...,  22.8682,  42.1275,  18.0581],
+         [ 70.4338,   0.5847,  -2.7951,  ..., -18.9241, -28.7554,  13.3666],
+         [  0.5606,   9.6777, -40.3975,  ...,   0.1787,   0.0000, -18.7898],
+         [ -0.0000,   9.8950, -19.4691,  ...,  10.6174,   7.8436,  19.6449]],
+
+        [[-17.8046, -15.8142,  -0.0000,  ..., -16.2114,  -2.5738,  -0.0000],
+         [  5.2375,  -8.1234,  -9.3114,  ...,   7.9752,  -7.7164,  10.9748],
+         [ 16.3702, -14.5719,   3.8670,  ..., -29.5858,  -9.5673,  -0.0000],
+         [ 12.2456,  16.9847,  37.8606,  ..., -50.1137, -45.1080, -24.3606]]],
+       grad_fn=<MulBackward0>)
+torch.Size([2, 4, 512])
+```
+## 3.1 Encoder part
+## 4.1 Decoder part
+## 5.1 Output part
