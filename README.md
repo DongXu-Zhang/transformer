@@ -104,5 +104,91 @@ tensor([[[-31.9787, -22.4201,  -2.7243,  ...,  22.8682,  42.1275,  18.0581],
 torch.Size([2, 4, 512])
 ```
 ## 3.1 Encoder part
+### 3.1.1 掩码张量
+- - **什么是掩码张量**
+在Transformer中，掩码张量是一种用于在计算注意力权重时屏蔽某些位置的张量。它通常以二值矩阵或张量的形式出现，其中的“1”或“True”表示该位置的信息是有效的，而“0”或“False”则表示该位置的信息应当被忽略。例如，在处理不同长度的句子时，为了避免模型在计算自注意力时考虑填充（padding）部分，我们会构造一个填充掩码，将填充位置屏蔽掉，从而确保模型只关注真实的输入信息。
+- - **掩码张量的作用**
+此外，掩码张量在自回归模型（如Transformer解码器）中也扮演着至关重要的角色。在这种场景下，通常需要使用因果掩码（causal mask），它可以阻止当前位置访问未来的信息，确保模型在生成下一个单词时只依赖于当前及之前的上下文。这不仅防止了信息泄露，也保持了生成过程的合理性和一致性。总之，掩码张量通过屏蔽不相关或不允许访问的信息，为Transformer模型提供了更高效、更准确的注意力机制。
+```bash
+# This is a detailed example of mask tensor.
+import numpy as np
+import torch
+import torch.nn as nn
+import math
+from torch.autograd import Variable
+
+# 构建掩码张量的函数
+def subsequent_mask(size):
+    '''生成向后遮掩的掩码张量 参数size是掩码张量最后两个维度的大小 最后两维形成了一个方阵'''
+    # 首先定义掩码张量的形状
+    attn_shape = (1, size, size)
+    # 使用np.ones方法向这个形状中添加元素1 形成上三角阵
+    subsequent_mask = np.triu(np.ones(attn_shape), k=1).astype('uint8')
+    # 最后将numpy类型转换为torch中的tensor 然后做一个三角阵的反转
+    return torch.from_numpy(1 - subsequent_mask)
+
+size = 5
+sm = subsequent_mask(size)
+print('sm=',sm)
+# The results are as follows:
+sm= tensor([[[1, 0, 0, 0, 0],
+         [1, 1, 0, 0, 0],
+         [1, 1, 1, 0, 0],
+         [1, 1, 1, 1, 0],
+         [1, 1, 1, 1, 1]]], dtype=torch.uint8)
+```
+### 3.1.2 注意力机制
+- - **什么是注意力机制**
+核心思想是：在处理序列或集合中每个元素时，根据该元素与其它元素的相关程度动态分配“注意力”权重，从而让模型能够“聚焦”于最重要的信息。在自然语言处理的Transformer中，注意力机制不仅能够捕捉长距离依赖，还能并行计算，大大提升了序列建模的效率和效果。
+```bash
+# This is a detailed example of attention mechanism.
+def attention(query, key, value, mask=None, dropout=None):
+    # QKV表示注意力的三个输入向量 mask表示掩码张量
+    # 首先把query的最后一个维度提取出来 代表的是词嵌入维度
+    d_k = query.size(-1)
+    # 按照注意力的计算公式 把QK进行矩阵乘法 再进行缩放
+    scores = torch.matmul(query, key.transpose(-2, -1)) / math.sqrt(d_k)
+    # 判断是否使用掩码张量
+    if mask is not None:
+        # 使用masked_fill 方法
+        scores = scores.masked_fill(mask == 0, -1e9)
+    # 对scores的最后一个维度进行softmax操作
+    p_attn = F.softmax(scores, dim=-1)
+    #判断是否使用dropout
+    if dropout is not None:
+        p_attn = dropout(p_attn)
+    #最后完成和V的乘法
+    return torch.matmul(p_attn, value), p_attn
+
+query = key = value = pe_result
+mask = Variable(torch.zeros(2, 4, 4))
+attn, p_attn = attention(query, key, value, mask=mask)
+print('attn', attn)
+print(attn.shape)
+print('p_attn', p_attn)
+print(p_attn.shape)
+# The results are as follows:
+attn tensor([[[ 11.9263, -13.5503, -10.0237,  ...,  18.0915,  -3.3088,  15.5298],
+         [ 11.9263, -13.5503, -10.0237,  ...,  18.0915,  -3.3088,  15.5298],
+         [ 11.9263, -13.5503, -10.0237,  ...,  18.0915,  -3.3088,  15.5298],
+         [ 11.9263, -13.5503, -10.0237,  ...,  18.0915,  -3.3088,  15.5298]],
+
+        [[-20.2358,   7.6624,  22.7583,  ...,   7.7242,  -0.7902, -14.7818],
+         [-20.2358,   7.6624,  22.7583,  ...,   7.7242,  -0.7902, -14.7818],
+         [-20.2358,   7.6624,  22.7583,  ...,   7.7242,  -0.7902, -14.7818],
+         [-20.2358,   7.6624,  22.7583,  ...,   7.7242,  -0.7902, -14.7818]]],
+       grad_fn=<UnsafeViewBackward>)
+torch.Size([2, 4, 512])
+p_attn tensor([[[0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500]],
+
+        [[0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500],
+         [0.2500, 0.2500, 0.2500, 0.2500]]], grad_fn=<SoftmaxBackward>)
+torch.Size([2, 4, 4])
+```
 ## 4.1 Decoder part
 ## 5.1 Output part
