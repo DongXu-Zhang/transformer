@@ -195,5 +195,229 @@ torch.Size([2, 4, 4])
 对于多头注意力机制的每个头，都是从词义层面分割输出的向量，也就是每一组都会获得一组QKV去进行注意力机制下计算，但是句子中的每个词的表示只会获得一部分，也就是只分割了最后一维的词嵌入向量。这就是所谓的多头，然后将每个头的获得的输入送到注意力机制当中，就形成了多头注意力机制。
 - - **多头注意力的作用**
 多头注意力机制的设计能够让每个注意力机制去优化每个词汇的不同特征部分，从而去均衡同一种注意力机制可能产生的偏差，让词义拥有更加多元的表达，从而提升模型的效果。
+```bash
+# This is a detailed example of multi head attention mechanism.
+import copy
+# 这里是定义克隆函数 因为多头注意力的实现中用到了多个结构相同的线性层
+# 使用clone函数将他们初始化在一个网络层列表对象中
+def clones(module, N):
+    '''module表示需要克隆的目标网络层 N代表需要克隆的数量'''
+    # 使用for循环进行N次深度拷贝 然后放在ModuleList类型的列表中存放
+    return nn.ModuleList([copy.deepcopy(module) for _ in range(N)])
+
+# 多头注意力机制的实现
+class MultiheadedAttention(nn.Module):
+    def __init__(self, head, embedding_dim, dropout=0.1):
+        super(MultiheadedAttention, self).__init__()
+        # 首先使用了一个常用的assert语句 判断h是否能被d_model整除
+        assert embedding_dim % head ==0
+        # 得到每个头获得的分割词向量维度d_k
+        self.d_k = embedding_dim // head
+        self.head = head
+        # 获得线性层的对象 通过nn的Linear实例化
+        self.linears = clones(nn.Linear(embedding_dim, embedding_dim), 4)
+        self.attn = None
+        self.dropout = nn.Dropout(p=dropout)
+        self.embedding_dim = embedding_dim
+
+    def forward(self, query, key, value, mask=None):
+        if mask is not None:
+            mask = mask.unsqueeze(1)
+        # batch是query的第一个数字 代表样本的数量
+        batch_size = query.size(0)
+        # 接下来是多头处理的环节 首先用zip将输入QKV与三个线性层组到一起 然后用for循环将输入QKV分别传入线性层当中
+        # 做完线性变换以后 开始为每个头分割输入 这里使用view方法对线性变换的结果进行维度重塑
+        query, key, value = \
+            [model(x).view(batch_size, -1, self.head, self.d_k).transpose(1,2)
+            for model, x in zip(self.linears, (query, key, value))]
+        # 得到每个头的输入以后 接下来就是将其传入到attention当中
+        x, self.attn = attention(query, key, value, mask=mask, dropout=self.dropout)
+        x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.head * self.d_k)
+        return self.linears[-1](x)
+    
+# 实例化若干的参数
+head = 8
+embedding_dim = 512
+dropout = 0.2
+query = key = value = pe_result
+mask = Variable(torch.zeros(2,4,4))
+
+mha = MultiheadedAttention(head, embedding_dim, dropout)
+mha_result = mha(query,key,value,mask)
+print(mha_result)
+print(mha_result.shape)
+# The results are as follows:
+tensor([[[ -3.9993,  -3.5554,   6.3467,  ...,  -3.0722,   1.0910,   2.9540],
+         [ -4.7121,  -6.4751,   3.8081,  ...,   0.2413,   4.7377,   1.9382],
+         [ -1.9218,  -4.5044,   8.8016,  ...,  -3.8309,   6.7816,  -0.0161],
+         [ -2.8617,  -4.3720,   8.3434,  ...,   2.5949,   3.1851,   1.4877]],
+
+        [[  7.2814, -10.7042,  11.0558,  ...,  -4.1575,  -2.8405,  -2.0274],
+         [  6.6125, -13.0375,   9.1045,  ...,  -5.1532,  -3.0732,  -3.0730],
+         [  3.2637, -13.4917,  12.3607,  ...,  -6.6971,  -5.1254,  -0.0336],
+         [  4.0955, -11.1701,  11.1295,  ...,  -5.6212,  -5.5568,  -8.0366]]],
+       grad_fn=<AddBackward0>)
+torch.Size([2, 4, 512])
+```
+### 3.1.4 前馈全连接层
+是一个拥有两层线性层的全连接网络，通过这两层网络来增加模型的拟合能力。
+```bash
+# This is a detailed example of feedforward.
+# 前馈全连接层
+class PositionwiseFeedForward(nn.Module):
+    def __init__(self, d_model, d_ff, dropout = 0.1):
+        '''第一个参数是线性层的输入维度 第二个参数是第二个线性层的维度'''
+        super(PositionwiseFeedForward, self).__init__()
+        self.w1 = nn.Linear(d_model, d_ff)
+        self.w2 = nn.Linear(d_ff,d_model)
+        self.dropout = nn.Dropout(dropout)
+    def forward(self, x):
+        return self.w2(self.dropout(F.relu(self.w1(x))))
+    
+d_model = 512
+d_ff = 64
+dropout = 0.2
+x = mha_result
+ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+ff_result = ff(x)
+print(ff_result)
+print(ff_result.shape)
+# The results are as follows:
+tensor([[[ 1.2032, -0.7195, -0.6662,  ...,  1.3783,  2.1415, -0.8303],
+         [ 0.9599, -0.1443,  0.5502,  ...,  0.2813,  1.2494, -0.5105],
+         [ 0.7620, -1.2081, -0.8471,  ...,  1.9403, -1.0079, -0.5598],
+         [ 0.3249,  0.8087, -0.3683,  ...,  2.1917,  0.0975, -1.5273]],
+
+        [[ 1.1452,  1.1336,  1.1611,  ...,  0.3112, -0.8748,  0.6525],
+         [ 1.1502,  0.3174,  2.1182,  ..., -1.4120,  0.2992, -0.4102],
+         [-0.4499, -1.1261,  1.4653,  ..., -0.1751, -1.1092, -0.3603],
+         [ 0.2820, -0.7119,  0.9371,  ..., -1.5366,  0.2383,  0.2292]]],
+       grad_fn=<AddBackward0>)
+torch.Size([2, 4, 512])
+```
+### 3.1.5 规范化层
+是所有深层网络模型中都需要的标准网络层，随着网络层数的增加，多层计算后的参数可能出现过大或者过小的情况，会导致学习过程异常，模型收敛的非常慢，所以需要在一定层数后接规范化层进行数值的规范化。
+```bash
+# This is a detailed example of LayerNormalization.
+class LayerNorm(nn.Module):
+    def __init__(self, features, eps = 1e-6):
+        '''features表示词嵌入的维度 eps是一个足够小的数 在规范化公式的分母中出现防止除0'''
+        super(LayerNorm, self).__init__()
+        self.a2 = nn.Parameter(torch.ones(features))
+        self.b2 = nn.Parameter(torch.zeros(features))
+        self.eps = eps
+    def forward(self, x):
+        '''首先对输入的变量x求最后一个维度的均值 并保持输出维度和输入的维度一致
+        接下来求最后一个维度的标准差 然后根据规范化公式 用x减去均值除以标准差获得规范化的结果
+        最后将结果乘以缩放参数'''
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.a2 * (x-mean) / (std+self.eps) + self.b2
+
+features = d_model = 512
+eps = 1e-6
+x = ff_result
+print(x.shape)
+ln = LayerNorm(features,eps)
+ln_result = ln(x)
+print(ln_result)
+print(ln_result.shape)
+# The results are as follows:
+tensor([[[-0.6359,  0.7023, -0.4170,  ...,  2.1730, -0.8941,  0.8354],
+         [ 0.0142,  0.2656,  0.6295,  ...,  1.3620, -0.4182, -0.4721],
+         [ 0.4441, -0.4372,  0.4373,  ...,  0.1236, -2.6611,  0.2267],
+         [ 0.1471,  0.8078,  0.1409,  ...,  1.8012, -0.8516, -0.0402]],
+
+        [[ 0.7314,  0.0450,  0.0150,  ..., -1.2965, -0.5354,  0.8872],
+         [ 0.7295, -0.4642, -0.7781,  ...,  1.8111, -0.9010,  1.2039],
+         [ 0.6218, -0.5357,  0.4160,  ..., -0.4675, -0.1464,  0.6479],
+         [ 0.5631, -0.8610, -0.0918,  ...,  0.6371, -0.5994,  1.9653]]],
+       grad_fn=<AddBackward0>)
+torch.Size([2, 4, 512])
+```
+### 3.1.6 子层连接结构
+在将特征输入到每个子层以及规范化层的过程中，使用了残差连接，因此把这一部分的结构整体叫做子层连接，在每个编码器层中都有两个子层，子层加上残差连接就形成了两个子层连接结构。
+```bash
+# This is a detailed example of SubLayer Connection.
+class SublayerConnection(nn.Module):
+    '''size是指词嵌入维度的大小'''
+    def __init__(self, size, dropout):
+        '''size一般是指词嵌入维度的大小'''
+        super(SublayerConnection, self).__init__()
+        self.norm = LayerNorm(size)
+        self.dropout = nn.Dropout(p=dropout)
+    def forward(self, x, sublayer):
+        '''第一个参数是上一个层或者子层的输入 第二个参数是子层连接中的子层函数'''
+        return x + self.dropout(sublayer(self.norm(x)))
+
+size = 512
+dropout = 0.2
+head = 8
+d_model = 512
+x = pe_result
+mask = Variable(torch.zeros(2,4,4))
+self_attn = MultiheadedAttention(head, d_model)
+sublayer = lambda x: self_attn(x,x,x,mask)
+
+sc = SublayerConnection(size, dropout)
+sc_result = sc(x, sublayer)
+print(sc_result)
+print(sc_result.shape)
+# The results are as follows:
+tensor([[[ -5.7615,  29.0759, -17.5428,  ...,   0.0000,   0.0000,  13.6098],
+         [ 11.5250,   0.1515,   0.1018,  ...,  29.0540, -30.4301, -36.6647],
+         [ -6.8172,  29.9645, -32.7459,  ..., -33.9866,   8.7879,  -0.1351],
+         [ 29.7687, -75.8698,  25.3206,  ..., -14.7901, -21.2991, -25.1201]],
+
+        [[ 13.9219, -45.4740,   3.0083,  ...,  -5.9285, -30.9866,  12.0934],
+         [ 22.1525, -17.9376,  39.5723,  ...,  27.6662,  -8.5317,   5.0739],
+         [-48.5088, -28.5838,  54.8052,  ...,   9.6688,  28.9733,  41.0445],
+         [  9.7568, -18.6635, -14.9626,  ...,  56.7985,  -3.2470,   0.8308]]],
+       grad_fn=<AddBackward0>)
+torch.Size([2, 4, 512])
+```
 ## 4.1 Decoder part
+编码器层的作用
+编码器层是编码器的组成单元，每个编码器层完成一次对输入的特征提取过程，即编码过程。
+```bash
+# This is a detailed example of decoder.
+# 用EncoderLayer实现编码器层
+class Encoderlayer(nn.Module):
+    def __init__(self, size, self_attn, feed_forward, dropout):
+        '''四个参数分别代表词嵌入维度的大小 自注意力机制 前馈神经网络 置零的比率'''
+        super(Encoderlayer, self).__init__()
+        self.self_attn = self_attn
+        self.feed_forward = feed_forward
+        self.sublayer = clones(SublayerConnection(size, dropout), 2)
+        self.size = size
+    def forward(self, x, mask):
+        '''两个参数分别代表上一层的输出和掩码张量'''
+        x = self.sublayer[0](x, lambda x:self.self_attn(x,x,x,mask))
+        return self.sublayer[1](x, self.feed_forward)
+size = 512
+head = 8
+d_model = 512
+d_ff = 64
+x = pe_result
+dropout = 0.2
+self_attn = MultiheadedAttention(head, d_model)
+ff = PositionwiseFeedForward(d_model, d_ff, dropout)
+mask =  Variable(torch.zeros(2,4,4))
+el = Encoderlayer(size, self_attn, ff, dropout)
+el_result = el(x, mask)
+print(el_result)
+print(el_result.shape)
+# The results are as follows:
+tensor([[[ 47.4108,  -2.6498,  14.8740,  ...,   7.5160, -33.8224,  27.3202],
+         [  0.6115,   0.6399,  22.9186,  ...,  -0.1183,   9.4176, -30.9048],
+         [-18.6926,  24.4619,  16.5530,  ..., -19.8004,  21.9830, -19.2904],
+         [ 14.8341,  38.7695,   0.5941,  ...,  30.3931,  -0.3764, -15.3969]],
+
+        [[  0.1461,   6.3666,   1.4733,  ...,   2.7979,  16.9610,  -9.5869],
+         [-34.0049,  48.1381, -14.0525,  ...,   3.1778, -44.4581,  12.1876],
+         [ 11.0543, -14.5130, -21.1591,  ...,  -3.2653, -24.5632,  -0.2101],
+         [  0.0000,  -1.8272, -16.3918,  ...,  -0.2011,  24.5516,  37.7460]]],
+       grad_fn=<AddBackward0>)
+torch.Size([2, 4, 512])
+```
 ## 5.1 Output part
